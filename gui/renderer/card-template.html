@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<title>card</title>
+<style>
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0;
+    width: 1080px;
+    height: 1350px;
+    background: #0b0c0f;
+    color: #e8e9ec;
+    font-family: -apple-system, 'Malgun Gothic', sans-serif;
+    overflow: hidden;
+  }
+  #card {
+    width: 1080px;
+    height: 1350px;
+    padding: 64px 56px;
+    display: flex;
+    flex-direction: column;
+  }
+  #header { text-align: center; margin-bottom: 36px; }
+  #brand { font-size: 20px; color: #5c6069; font-weight: 600; letter-spacing: 2px; margin-bottom: 10px; }
+  #channel { font-size: 34px; font-weight: 700; color: #f2f3f5; }
+  #meta { font-size: 18px; color: #6b6f78; margin-top: 6px; }
+
+  #moodBlock {
+    text-align: center; background: #15171c; border: 1px solid #1f2128;
+    border-radius: 24px; padding: 36px 28px; margin-bottom: 32px;
+  }
+  #moodEmoji { font-size: 72px; line-height: 1; margin-bottom: 12px; }
+  #moodLabel { font-size: 32px; font-weight: 700; color: #f2f3f5; margin-bottom: 8px; }
+  #moodSub { font-size: 19px; color: #9a9da5; }
+
+  #stats { display: flex; gap: 16px; margin-bottom: 32px; }
+  .stat { flex: 1; background: #15171c; border: 1px solid #1f2128; border-radius: 18px; padding: 22px; text-align: center; }
+  .stat .label { font-size: 16px; color: #6b6f78; margin-bottom: 8px; }
+  .stat .value { font-size: 30px; font-weight: 700; color: #f2f3f5; }
+  .stat .value.donation { color: #f5a623; }
+
+  #kingsBlock { margin-bottom: 32px; }
+  .section-label { font-size: 20px; font-weight: 700; color: #c9cbd1; margin-bottom: 16px; }
+  .king-row { display: flex; align-items: center; gap: 14px; background: #14151a; border-radius: 14px; padding: 14px 18px; margin-bottom: 10px; }
+  .king-row .medal { font-size: 24px; width: 36px; text-align: center; }
+  .king-row .nick { flex: 1; font-size: 21px; font-weight: 600; color: #dcdde2; }
+  .king-row .count { font-size: 18px; color: #8a8d96; }
+
+  #wordsBlock { flex: 1; }
+  #wordCloud { display: flex; flex-wrap: wrap; gap: 10px; }
+  .word-chip {
+    font-weight: 700; background: #15171c; border: 1px solid #22242b;
+    border-radius: 24px; padding: 10px 20px; color: #c2c4ca;
+  }
+
+  #footer { text-align: center; font-size: 15px; color: #4a4d55; margin-top: 24px; }
+</style>
+</head>
+<body>
+<div id="card">
+  <div id="header">
+    <div id="brand">CHZZK CHAT REPORT</div>
+    <div id="channel">-</div>
+    <div id="meta">-</div>
+  </div>
+
+  <div id="moodBlock">
+    <div id="moodEmoji">🙂</div>
+    <div id="moodLabel">-</div>
+    <div id="moodSub">-</div>
+  </div>
+
+  <div id="stats">
+    <div class="stat"><div class="label">총 채팅 수</div><div class="value" id="statMsg">0</div></div>
+    <div class="stat"><div class="label">참여 시청자</div><div class="value" id="statUsers">0</div></div>
+    <div class="stat"><div class="label">총 후원 금액</div><div class="value donation" id="statDonation">0원</div></div>
+  </div>
+
+  <div id="kingsBlock">
+    <div class="section-label">🏆 채팅왕 TOP 3</div>
+    <div id="kingsList"></div>
+  </div>
+
+  <div id="wordsBlock">
+    <div class="section-label">💬 자주 나온 단어</div>
+    <div id="wordCloud"></div>
+  </div>
+
+  <div id="footer">chzzk-chat-report</div>
+</div>
+<script>
+  const MEDALS = ['🥇', '🥈', '🥉'];
+
+  function renderCard(report) {
+    document.getElementById('channel').textContent = report.session.channelName;
+    const date = new Date(report.session.startedAt).toLocaleDateString('ko-KR');
+    document.getElementById('meta').textContent = `${date} · 방송 ${report.durationMinutes}분`;
+
+    document.getElementById('moodEmoji').textContent = report.mood.emoji;
+    document.getElementById('moodLabel').textContent = report.mood.label;
+    document.getElementById('moodSub').textContent = report.mood.subtitle;
+
+    document.getElementById('statMsg').textContent = report.totalMessages.toLocaleString();
+    document.getElementById('statUsers').textContent = report.uniqueChatters.toLocaleString();
+    document.getElementById('statDonation').textContent = `${report.totalDonationAmount.toLocaleString()}원`;
+
+    const kingsList = document.getElementById('kingsList');
+    kingsList.innerHTML = '';
+    report.topChatters.slice(0, 3).forEach((u, i) => {
+      const row = document.createElement('div');
+      row.className = 'king-row';
+      row.innerHTML = `<span class="medal">${MEDALS[i] || ''}</span><span class="nick">${u.nickname}</span><span class="count">${u.count}회</span>`;
+      kingsList.appendChild(row);
+    });
+
+    const cloud = document.getElementById('wordCloud');
+    cloud.innerHTML = '';
+    report.topWords.slice(0, 10).forEach((w) => {
+      const chip = document.createElement('span');
+      chip.className = 'word-chip';
+      chip.textContent = w.word;
+      cloud.appendChild(chip);
+    });
+
+    // Electron 메인 프로세스가 executeJavaScript로 렌더링을 트리거한 뒤 이 값을 폴링해서
+    // 언제 캡처해도 되는지 판단한다.
+    window.__cardReady = true;
+  }
+</script>
+</body>
+</html>

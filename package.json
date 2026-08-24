@@ -1,0 +1,93 @@
+{
+  "name": "chzzk-chat-report",
+  "version": "0.1.0",
+  "description": "치지직 라이브 방송 채팅을 수집해서 방송 종료 시 리포트를 생성하는 MVP",
+  "author": "chzzk-chat-report",
+  "main": "dist/index.js",
+  "type": "commonjs",
+  "scripts": {
+    "build": "tsc -p .",
+    "watch": "node dist/index.js watch",
+    "demo": "node dist/demo.js",
+    "bench:vision": "node dist/vision-bench.js",
+    "setup:kiwi": "node scripts/download-kiwi-model.js",
+    "predist": "npm run build",
+    "dist": "electron-builder",
+    "dist:dir": "electron-builder --dir",
+    "dist:win": "electron-builder --win",
+    "dist:mac": "electron-builder --mac",
+    "dist:linux": "electron-builder --linux"
+  },
+  "dependencies": {
+    "chzzk": "^1.4.0",
+    "commander": "^12.1.0",
+    "dashjs": "^5.2.0",
+    "dayjs": "^1.11.13",
+    "ffmpeg-static": "^5.2.0",
+    "hls.js": "^1.7.0",
+    "kiwi-nlp": "^0.23.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.7.4",
+    "electron": "^32.0.0",
+    "electron-builder": "^24.13.3",
+    "typescript": "^5.6.2"
+  },
+  "build": {
+    "appId": "com.chzzkchatreport.desktop",
+    "productName": "chzzk-chat-report",
+    "npmRebuild": false,
+    "asar": true,
+    "asarUnpack": [
+      "node_modules/ffmpeg-static/**"
+    ],
+    "extraMetadata": {
+      "main": "gui/main.js"
+    },
+    "files": [
+      "dist/**/*",
+      "gui/main.js",
+      "gui/preload.js",
+      "gui/renderer/**/*",
+      "gui/assets/**/*",
+      "package.json",
+      "node_modules/**/*",
+      "!node_modules/typescript/**",
+      "!node_modules/@types/**",
+      "!node_modules/electron/**",
+      "!node_modules/electron-builder/**",
+      "!**/*.ts",
+      "!**/*.map",
+      "!src/**",
+      "!scripts/**",
+      "!.claude/**",
+      "!reports/**",
+      "!data/**",
+      "!models/**",
+      "!config.json"
+    ],
+    "directories": {
+      "output": "release"
+    },
+    "win": {
+      "target": ["nsis"],
+      "icon": "gui/assets/app-icon.png"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "deleteAppDataOnUninstall": false
+    },
+    "mac": {
+      "target": ["dmg"],
+      "icon": "gui/assets/app-icon.png",
+      "category": "public.app-category.utilities"
+    },
+    "linux": {
+      "target": ["AppImage"],
+      "icon": "gui/assets/app-icon.png",
+      "category": "Utility"
+    }
+  }
+}

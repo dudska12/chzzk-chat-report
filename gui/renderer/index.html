@@ -1,0 +1,849 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<!-- connect-src/media-src/worker-src: VOD 영상을 hls.js/dash.js로 직접 재생하면서 추가했다.
+     이 라이브러리들이 실제 영상 조각(.ts/.m4s)과 매니페스트(.m3u8/.mpd)를 chzzk/네이버 CDN에서
+     내려받는데, 정확히 어떤 CDN 도메인을 쓰는지는(자주 바뀔 수 있어서) 이 환경에서 확인할
+     방법이 없어 https: 전체를 허용했다 — 이 앱은 우리가 직접 만든 index.html 하나만 로드하고
+     외부의 신뢰할 수 없는 페이지를 띄우지 않으므로(예전엔 <webview>로 실제 chzzk 페이지를
+     띄웠지만 지금은 제거함), 느슨하게 열어도 실제 위험은 낮다고 판단했다. -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://fonts.gstatic.com; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; font-src https://cdn.jsdelivr.net; connect-src 'self' https: blob:; media-src 'self' https: blob:; worker-src 'self' blob:;" />
+<title>치지직 채팅 감시 &amp; 리포트</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.css" />
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body {
+    background: #0b0c0f;
+    color: #e8e9ec;
+    font-family: 'Pretendard', -apple-system, 'Malgun Gothic', sans-serif;
+    overflow: hidden;
+  }
+  ::-webkit-scrollbar { width: 8px; height: 8px; }
+  ::-webkit-scrollbar-thumb { background: #2a2d34; border-radius: 4px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.35; } }
+  @keyframes blink { 0%,100% { opacity: 1; } 50% { opacity: 0.2; } }
+
+  #app {
+    width: 100vw;
+    height: 100vh;
+    background: #0b0c0f;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  /* 타이틀바 (윈도우 표준 레이아웃: 좌측 설정, 우측 최소화/최대화/닫기) */
+  #titlebar {
+    height: 36px;
+    display: flex;
+    align-items: center;
+    padding: 0;
+    background: #0e0f13;
+    border-bottom: 1px solid #1a1c22;
+    flex-shrink: 0;
+    -webkit-app-region: drag;
+  }
+  #titlebar .titlebar-spacer { flex: 1; height: 100%; }
+
+  /* 상단 바 */
+  #topbar {
+    display: flex; align-items: center; gap: 10px;
+    padding: 16px 20px; background: #111318; border-bottom: 1px solid #1a1c22;
+    flex-shrink: 0;
+  }
+  #selectedChannelBox { display: flex; flex-direction: column; gap: 2px; }
+  #selectedChannelBox .name { font-size: 14px; font-weight: 700; color: #f2f3f5; }
+  #selectedChannelBox .sub { font-size: 10.5px; color: #5c6069; }
+
+  button.action {
+    height: 40px; padding: 0 18px; border-radius: 8px; border: none;
+    font-size: 13px; font-weight: 600; display: flex; align-items: center; gap: 7px;
+    transition: all .15s; font-family: inherit; cursor: pointer;
+  }
+  button.action:disabled { cursor: not-allowed; }
+  #stopBtn { background: transparent; border: 1px solid rgba(225,91,100,0.4); color: #f28a90; }
+  #stopBtn:disabled { background: transparent; border: 1px solid #22242b; color: #4a4d55; }
+
+  #statusBadge {
+    display: flex; align-items: center; gap: 6px; padding: 5px 12px; border-radius: 20px;
+    font-weight: 600; border: 1px solid #2a2d34; background: #1a1c22; color: #8a8d96; font-size: 12px;
+  }
+  #statusBadge .indicator { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+
+  /* AI 화면 분석 상태/비용 배지. 상단바에서 상태 배지 바로 왼쪽에 붙는다 — 켜져 있으면 지금까지
+     호출 횟수/추정 비용이 한눈에 보이게, 꺼져 있으면(API 키 없음/ffmpeg 없음) 흐리게 표시한다. */
+  #visionBadge {
+    display: flex; align-items: center; gap: 6px; padding: 5px 12px; border-radius: 20px;
+    font-weight: 600; border: 1px solid #2a2d34; background: #1a1c22; font-size: 12px;
+  }
+  #visionBadge .indicator { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+  #visionBadge.on { color: #5ee6a3; border-color: rgba(94,230,163,0.35); background: rgba(94,230,163,0.08); }
+  #visionBadge.off { color: #5c6069; }
+
+  /* 상태 스트립 */
+  #statusStrip {
+    display: flex; align-items: center; gap: 16px; padding: 8px 20px;
+    background: #0e0f13; border-bottom: 1px solid #1a1c22; font-size: 11.5px; color: #5c6069;
+    flex-shrink: 0;
+  }
+  #statusStrip .sep { color: #2a2d34; }
+  #statusStrip b { color: #9a9da5; font-weight: 700; }
+  #statusStrip b.donation { color: #f5a623; }
+
+  /* 본문 */
+  #main { flex: 1; display: flex; overflow: hidden; position: relative; }
+
+  /* 사이드바: 즐겨찾기(=동시 감시 채널) 목록. 채널마다 감시 온/오프 토글이 있고,
+     행을 클릭하면 그 채널의 로그/리포트/타임라인이 오른쪽에 표시된다. */
+  #sidebar {
+    width: 236px; flex-shrink: 0; display: flex; flex-direction: column;
+    border-right: 1px solid #1a1c22; background: #0e0f13; overflow: hidden;
+  }
+  #sidebar .sidebar-head {
+    padding: 14px 14px 10px; font-size: 12px; font-weight: 700; color: #c9cbd1;
+  }
+
+  /* 사이드바 상단 "즐겨찾기 / VOD 분석" 세그먼트 스위치. 성격이 다른 두 목록(계속 감시하는
+     즐겨찾기 vs 한 번 실행하고 끝나는 VOD 분석)을 한 리스트에 섞지 않고 탭으로 분리한다. */
+  #sidebarSegment { display: flex; gap: 4px; padding: 12px 12px 10px; }
+  .seg-btn {
+    flex: 1; padding: 7px 0; border-radius: 7px; border: 1px solid #22242b; background: #14151a;
+    color: #8a8d96; font-size: 11.5px; font-weight: 700; cursor: pointer; font-family: inherit;
+    transition: all .15s;
+  }
+  .seg-btn.active { background: rgba(91,141,239,0.14); border-color: rgba(91,141,239,0.45); color: #9fc0f7; }
+  .seg-panel { flex: 1; display: flex; flex-direction: column; overflow: hidden; min-height: 0; }
+
+  #favoriteAddBox, #vodAddBox { display: flex; gap: 6px; padding: 0 12px 10px; }
+  #favoriteAddInput {
+    flex: 1; min-width: 0; background: #1a1c22; border: 1px solid #2a2d34; border-radius: 7px;
+    padding: 7px 9px; color: #e8e9ec; font-size: 11.5px; font-family: inherit; outline: none;
+  }
+  #favoriteAddInput::placeholder { color: #4a4d55; }
+  #favoriteAddInput:focus { border-color: #5b8def; }
+  #favoriteAddBtn {
+    width: 30px; flex-shrink: 0; background: #1f2937; border: 1px solid #2a2d34; border-radius: 7px;
+    color: #9fc0f7; font-size: 15px; font-weight: 700; cursor: pointer; font-family: inherit;
+  }
+  #favoriteAddBtn:disabled { opacity: .5; cursor: not-allowed; }
+  .sidebar-error { padding: 0 14px 8px; font-size: 10.5px; color: #f28a90; display: none; }
+
+  #vodAddInput {
+    flex: 1; min-width: 0; background: #1a1c22; border: 1px solid #2a2d34; border-radius: 7px;
+    padding: 7px 9px; color: #e8e9ec; font-size: 11.5px; font-family: inherit; outline: none;
+  }
+  #vodAddInput::placeholder { color: #4a4d55; }
+  #vodAddInput:focus { border-color: #5b8def; }
+  #vodAddBtn {
+    width: 30px; flex-shrink: 0; background: #1f2937; border: 1px solid #2a2d34; border-radius: 7px;
+    color: #9fc0f7; font-size: 15px; font-weight: 700; cursor: pointer; font-family: inherit;
+  }
+  #vodAddBtn:disabled { opacity: .5; cursor: not-allowed; }
+
+  #favoriteList, #vodJobList { flex: 1; overflow-y: auto; padding: 2px 8px 12px; }
+  #favoriteEmpty, #vodJobEmpty { padding: 10px 8px; font-size: 11px; color: #4a4d55; line-height: 1.6; }
+
+  .fav-row {
+    display: flex; align-items: center; gap: 8px; padding: 8px 8px; border-radius: 8px;
+    cursor: pointer; margin-bottom: 2px; border: 1px solid transparent;
+  }
+  .fav-row:hover { background: #14151a; }
+  .fav-row.selected { background: rgba(91,141,239,0.12); border-color: rgba(91,141,239,0.35); }
+  .fav-dot { width: 8px; height: 8px; border-radius: 50%; background: #3a3d44; flex-shrink: 0; }
+  .fav-dot.monitoring { background: #5ee6a3; animation: pulse 1.6s infinite; }
+  .fav-dot.done { background: #7ea3f2; }
+  .fav-info { flex: 1; min-width: 0; }
+  .fav-name { font-size: 12px; font-weight: 600; color: #dcdde2; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .fav-status { font-size: 10px; color: #5c6069; margin-top: 1px; }
+  .fav-toggle { position: relative; width: 30px; height: 17px; flex-shrink: 0; }
+  .fav-toggle input { opacity: 0; width: 0; height: 0; }
+  .fav-toggle-slider {
+    position: absolute; inset: 0; background: #2a2d34; border-radius: 20px; cursor: pointer; transition: background .15s;
+  }
+  .fav-toggle-slider::before {
+    content: ""; position: absolute; width: 13px; height: 13px; left: 2px; top: 2px;
+    background: #8a8d96; border-radius: 50%; transition: transform .15s, background .15s;
+  }
+  .fav-toggle input:checked + .fav-toggle-slider { background: rgba(94,230,163,0.25); }
+  .fav-toggle input:checked + .fav-toggle-slider::before { transform: translateX(13px); background: #5ee6a3; }
+  .fav-remove {
+    width: 18px; height: 18px; flex-shrink: 0; border: none; background: transparent; color: #4a4d55;
+    font-size: 13px; cursor: pointer; border-radius: 4px; line-height: 1;
+  }
+  .fav-remove:hover { color: #f28a90; background: rgba(225,91,100,0.1); }
+
+  /* VOD 분석 작업 목록 - .fav-row와 구조는 비슷하지만 토글 스위치 대신 진행 상태를 보여준다.
+     즐겨찾기는 계속 감시하는 대상(on/off)이고, VOD 작업은 시작하면 끝까지 실행되고 끝나는
+     일회성 작업이라 토글이라는 개념이 안 맞기 때문. */
+  .vod-row {
+    display: flex; align-items: center; gap: 8px; padding: 8px 8px; border-radius: 8px;
+    cursor: pointer; margin-bottom: 2px; border: 1px solid transparent;
+  }
+  .vod-row:hover { background: #14151a; }
+  .vod-row.selected { background: rgba(91,141,239,0.12); border-color: rgba(91,141,239,0.35); }
+  .vod-dot { width: 8px; height: 8px; border-radius: 50%; background: #3a3d44; flex-shrink: 0; }
+  .vod-dot.running { background: #f5c542; animation: pulse 1.6s infinite; }
+  .vod-dot.done { background: #7ea3f2; }
+  .vod-dot.error { background: #f28a90; }
+  .vod-info { flex: 1; min-width: 0; }
+  .vod-name { font-size: 12px; font-weight: 600; color: #dcdde2; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .vod-status { font-size: 10px; color: #5c6069; margin-top: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .vod-progress-bar {
+    height: 3px; border-radius: 2px; background: #22242b; margin-top: 4px; overflow: hidden;
+  }
+  .vod-progress-bar > div { height: 100%; background: #5b8def; transition: width .25s; }
+  .vod-remove {
+    width: 18px; height: 18px; flex-shrink: 0; border: none; background: transparent; color: #4a4d55;
+    font-size: 13px; cursor: pointer; border-radius: 4px; line-height: 1;
+  }
+  .vod-remove:hover { color: #f28a90; background: rgba(225,91,100,0.1); }
+  .vod-vision-btn {
+    flex-shrink: 0; height: 22px; padding: 0 8px; border-radius: 5px; font-size: 10px; font-weight: 600;
+    cursor: pointer; font-family: inherit; border: 1px solid rgba(94,230,163,0.35); background: rgba(94,230,163,0.1);
+    color: #5ee6a3; white-space: nowrap;
+  }
+  .vod-vision-btn:hover { background: rgba(94,230,163,0.18); }
+  .vod-vision-btn.running { border-color: rgba(242,138,144,0.35); background: rgba(242,138,144,0.1); color: #f28a90; }
+  .vod-vision-btn.running:hover { background: rgba(242,138,144,0.18); }
+
+  #mainEmpty {
+    /* left를 236px(사이드바 너비)만큼 띄워서 즐겨찾기 사이드바를 가리지 않게 한다 - 안 그러면
+       채널을 하나도 추가 안 한 초기 상태에서 이 오버레이가 사이드바 전체를 덮어버려서
+       즐겨찾기를 추가할 입력창 자체에 손을 댈 수 없게 된다. */
+    position: absolute; top: 0; right: 0; bottom: 0; left: 236px;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 8px; color: #4a4d55; background: #0b0c0f; z-index: 5;
+  }
+  #mainEmpty span.title { font-size: 12.5px; }
+  #mainEmpty span.sub { font-size: 11px; color: #3a3d44; }
+
+  #chatPanel { width: 40%; display: flex; flex-direction: column; border-right: 1px solid #1a1c22; overflow: hidden; }
+  /* 라이브 감시 화면도 VOD와 같은 위(영상)/아래(채팅) 반반 레이아웃을 쓴다 — 이미 갖고 있는
+     실시간 채팅 피드는 그대로 두고, 그 위에 실제 방송 영상을 붙였다. 영상 주소는
+     chzzk 패키지의 공식 지원 메서드(client.live.detail())가 바로 내려주기 때문에 VOD 때처럼
+     비공식 API를 역공학할 필요가 없었다. */
+  #chatPanel .live-video-box { flex: 1 1 50%; min-height: 0; display: flex; flex-direction: column; border-bottom: 1px solid #1a1c22; }
+  #chatPanel .live-chat-box { flex: 1 1 50%; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+  #chatPanel .head {
+    padding: 12px 16px; border-bottom: 1px solid #1a1c22;
+    display: flex; align-items: center; justify-content: space-between; flex-shrink: 0;
+  }
+  #chatPanel .head .label { font-size: 12.5px; font-weight: 700; color: #c9cbd1; letter-spacing: .2px; }
+  #chatPanel .head .hint { font-size: 10.5px; color: #5c6069; }
+  #liveOpenExternalBtn { cursor: pointer; }
+  #liveOpenExternalBtn:hover { color: #8a8d96; }
+  #liveVideoEl { flex: 1; width: 100%; min-height: 0; border: none; background: #000; }
+  #liveVideoEmpty { flex: 1; display: flex; align-items: center; justify-content: center; font-size: 11.5px; color: #4a4d55; text-align: center; padding: 12px; }
+  #chatFeed { flex: 1; overflow-y: auto; padding: 10px 12px; display: flex; flex-direction: column; gap: 2px; }
+  .chat-row { display: flex; gap: 6px; padding: 4px 6px; border-radius: 6px; font-size: 12.5px; line-height: 1.5; }
+  .chat-row .nick { font-weight: 600; flex-shrink: 0; }
+  .chat-row .text { color: #c2c4ca; word-break: break-word; }
+  .chat-row.donation {
+    flex-direction: column; gap: 4px;
+    background: linear-gradient(90deg, rgba(245,166,35,0.14), rgba(245,166,35,0.03));
+    border: 1px solid rgba(245,166,35,0.35); border-radius: 8px; padding: 8px 10px; margin: 5px 0;
+  }
+  .chat-row.donation .top { display: flex; align-items: center; gap: 6px; }
+  .chat-row.donation .nick { font-size: 12px; font-weight: 700; color: #f5a623; }
+  .chat-row.donation .amount { font-size: 11px; font-weight: 700; color: #f5a623; margin-left: auto; }
+  .chat-row.donation .text { font-size: 12.5px; color: #e8d6b8; line-height: 1.4; }
+  #liveIndicator { display: flex; align-items: center; gap: 6px; padding: 6px; font-size: 11px; color: #4a4d55; }
+  #liveIndicator .dot { width: 5px; height: 5px; border-radius: 50%; background: #4a4d55; animation: blink 1.2s infinite; }
+
+  /* VOD 분석 전용: '실시간 채팅' 패널(#chatPanel) 자리를 대신하는 위(영상)/아래(채팅) 반반
+     레이아웃. VOD는 채팅 이벤트가 실시간으로 안 오고(job-update만 옴) 이미 다 모아둔 상태라
+     '실시간' 패널이 항상 비어있었는데, 그 자리를 다시보기 영상 + 채팅으로 채운다. 아래
+     채팅 영역은 검색어가 있으면 검색 결과를, 비어있으면 영상 재생 위치와 동기화된 채팅을
+     보여준다(#vodSearchResults를 두 용도로 같이 씀 — renderer.js의 renderVodSearchResults()/
+     renderVodChatSyncFeed() 참고). */
+  #vodMediaPanel { width: 40%; display: none; flex-direction: column; border-right: 1px solid #1a1c22; overflow: hidden; }
+  #vodMediaPanel .vod-video-box { flex: 1 1 50%; min-height: 0; display: flex; flex-direction: column; border-bottom: 1px solid #1a1c22; }
+  #vodMediaPanel .vod-search-box { flex: 1 1 50%; min-height: 0; display: flex; flex-direction: column; }
+  #vodMediaPanel .head {
+    padding: 12px 16px; border-bottom: 1px solid #1a1c22;
+    display: flex; align-items: center; justify-content: space-between; flex-shrink: 0;
+  }
+  #vodMediaPanel .head .label { font-size: 12.5px; font-weight: 700; color: #c9cbd1; letter-spacing: .2px; }
+  #vodMediaPanel .head .hint { font-size: 10.5px; color: #5c6069; cursor: pointer; }
+  #vodMediaPanel .head .hint:hover { color: #8a8d96; }
+  #vodVideoEl { flex: 1; width: 100%; min-height: 0; border: none; background: #000; }
+  #vodVideoEmpty { flex: 1; display: flex; align-items: center; justify-content: center; font-size: 11.5px; color: #4a4d55; text-align: center; padding: 12px; }
+  #vodSearchForm { display: flex; gap: 6px; padding: 10px 12px; border-bottom: 1px solid #1a1c22; flex-shrink: 0; }
+  #vodSearchInput { flex: 1; background: #14161b; border: 1px solid #24262d; border-radius: 6px; padding: 7px 10px; font-size: 12px; color: #e7e8ea; }
+  #vodSearchInput:focus { outline: none; border-color: #5b8def; }
+  #vodSearchBtn { padding: 7px 12px; border-radius: 6px; border: 1px solid #24262d; background: #1a1c22; color: #c9cbd1; font-size: 12px; cursor: pointer; flex-shrink: 0; }
+  #vodSearchBtn:hover { background: #20222a; }
+  #vodSearchResults { flex: 1; overflow-y: auto; padding: 6px 12px; display: flex; flex-direction: column; gap: 2px; }
+  #vodSearchEmpty { padding: 16px 12px; font-size: 11.5px; color: #4a4d55; text-align: center; line-height: 1.6; }
+  .vod-search-row { display: flex; gap: 8px; padding: 6px; border-radius: 6px; cursor: pointer; font-size: 12px; line-height: 1.5; }
+  .vod-search-row:hover { background: rgba(91,141,239,0.1); }
+  .vod-search-row .time { flex-shrink: 0; color: #5b8def; font-variant-numeric: tabular-nums; font-weight: 600; }
+  .vod-search-row .nick { flex-shrink: 0; font-weight: 600; }
+  .vod-search-row .text { color: #c2c4ca; word-break: break-word; }
+
+  #rightPanel { width: 56%; display: flex; flex-direction: column; overflow: hidden; }
+  #tabs { display: flex; border-bottom: 1px solid #1a1c22; flex-shrink: 0; }
+  .tab {
+    padding: 12px 16px; font-size: 12.5px; font-weight: 700; color: #6b6f78;
+    border-bottom: 2px solid transparent; cursor: pointer; display: flex; align-items: center; gap: 6px;
+  }
+  .tab.active { color: #f2f3f5; border-bottom-color: #5b8def; }
+  .tab .ready-dot { width: 6px; height: 6px; border-radius: 50%; background: #5ee6a3; }
+
+  #logView { flex: 1; overflow-y: auto; padding: 12px 16px; display: flex; flex-direction: column; gap: 7px; }
+  .log-row { display: flex; gap: 8px; font-size: 11.5px; font-family: 'SF Mono', Consolas, monospace; line-height: 1.5; }
+  .log-row .time { color: #4a4d55; flex-shrink: 0; }
+  .log-row .tag { flex-shrink: 0; font-weight: 600; }
+  .log-row .text { color: #9a9da5; }
+
+  #reportView { flex: 1; overflow-y: auto; padding: 16px; display: none; }
+  #reportEmpty {
+    flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 10px; color: #4a4d55;
+  }
+  #reportEmpty span.title { font-size: 12px; }
+  #reportEmpty span.sub { font-size: 11px; color: #3a3d44; }
+
+  .report-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
+  .report-head .title { font-size: 15px; font-weight: 700; color: #f2f3f5; }
+  .report-head .meta { font-size: 11px; color: #5c6069; margin-top: 2px; }
+  .export-btn {
+    background: #1a1c22; border: 1px solid #2a2d34; color: #c2c4ca; font-size: 11.5px; font-weight: 600;
+    padding: 7px 12px; border-radius: 7px; cursor: pointer; display: flex; align-items: center; gap: 6px;
+    font-family: inherit; white-space: nowrap;
+  }
+  .export-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+  .metric-grid { display: grid; grid-template-columns: repeat(3,1fr); gap: 10px; margin-bottom: 18px; }
+  .metric-card { background: #15171c; border: 1px solid #1f2128; border-radius: 10px; padding: 12px; }
+  .metric-card .label { font-size: 10.5px; color: #6b6f78; margin-bottom: 4px; }
+  .metric-card .value { font-size: 19px; font-weight: 700; color: #f2f3f5; }
+  .metric-card .value.donation { color: #f5a623; }
+
+  .section { margin-bottom: 18px; }
+  .section-title { font-size: 12.5px; font-weight: 700; color: #c9cbd1; margin-bottom: 10px; display: flex; align-items: center; gap: 6px; }
+
+  .king-row { display: flex; align-items: center; gap: 10px; background: #14151a; border-radius: 7px; padding: 7px 10px; margin-bottom: 6px; }
+  .king-row .rank { width: 18px; font-size: 11px; font-weight: 700; text-align: center; }
+  .king-row .nick { flex: 1; font-size: 12px; font-weight: 600; color: #dcdde2; }
+  .king-row .bar-track { width: 120px; height: 5px; background: #22242b; border-radius: 3px; overflow: hidden; }
+  .king-row .bar-fill { height: 100%; background: #5b8def; border-radius: 3px; }
+  .king-row .count { font-size: 11px; color: #8a8d96; width: 52px; text-align: right; }
+
+  .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; margin-bottom: 18px; }
+  .word-cloud { display: flex; flex-wrap: wrap; gap: 6px; }
+  .word-chip { font-weight: 600; background: #15171c; border: 1px solid #22242b; border-radius: 20px; padding: 4px 10px; }
+
+  .mood-card { background: #15171c; border: 1px solid #1f2128; border-radius: 10px; padding: 14px; }
+  .mood-card .row { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+  .mood-card .emoji { font-size: 22px; }
+  .mood-card .label { font-size: 13.5px; font-weight: 700; color: #f2f3f5; }
+  .mood-card .sub { font-size: 10.5px; color: #6b6f78; }
+  .mood-bar { display: flex; gap: 3px; height: 6px; border-radius: 3px; overflow: hidden; }
+  .mood-bar .pos { background: #5ee6a3; }
+  .mood-bar .neu { background: #3a3d44; }
+  .mood-bar .neg { background: #e15b64; }
+  .mood-legend { display: flex; justify-content: space-between; font-size: 9.5px; color: #5c6069; margin-top: 5px; }
+
+  .donor-row {
+    display: flex; align-items: center; gap: 10px;
+    background: linear-gradient(90deg, rgba(245,166,35,0.08), transparent);
+    border: 1px solid rgba(245,166,35,0.2); border-radius: 7px; padding: 8px 10px; margin-bottom: 6px;
+  }
+  .donor-row .rank { width: 18px; font-size: 11px; font-weight: 700; color: #f5a623; text-align: center; }
+  .donor-row .nick { flex: 1; font-size: 12px; font-weight: 600; color: #dcdde2; }
+  .donor-row .amount { font-size: 12px; font-weight: 700; color: #f5a623; }
+
+  /* 타임라인 탭 */
+  #timelineView { flex: 1; overflow-y: auto; padding: 16px; display: none; }
+  #timelineEmpty {
+    flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 10px; color: #4a4d55;
+  }
+  #timelineEmpty span.title { font-size: 12px; }
+  .tl-head { display: flex; align-items: flex-end; justify-content: space-between; margin-bottom: 14px; gap: 12px; }
+  .tl-head-left { min-width: 0; flex: 1 1 auto; }
+  .tl-head .title { font-size: 14px; font-weight: 700; color: #f2f3f5; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  /* meta 줄에 방송 시작~끝 시각/총 방송 시간/자정 넘김 표시/구간 판단 근거까지 한 번에 들어가서
+     길어질 수 있는데, 줄바꿈되면 위 타이틀 줄과 겹쳐 보이거나 레이아웃이 깨져 보이므로 항상
+     한 줄로 유지하고, 정말 안 들어갈 만큼 좁으면 끝을 "…"으로 줄인다. */
+  .tl-head .meta { font-size: 11px; color: #5c6069; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .tl-head-right { display: flex; align-items: center; gap: 14px; flex-shrink: 0; }
+  .tl-legend { display: flex; gap: 12px; }
+  .tl-legend .item { display: flex; align-items: center; gap: 5px; font-size: 10.5px; color: #8a8d96; }
+  .tl-legend .swatch { width: 8px; height: 8px; border-radius: 2px; }
+  .tl-legend b { color: #c2c4ca; }
+
+  .tl-chart-box { background: #111318; border: 1px solid #1f2128; border-radius: 12px; padding: 16px 16px 12px; margin-bottom: 14px; }
+
+  /* 시간 직접 이동 + 확대/축소 컨트롤. 방송이 길어질수록(버킷이 많아질수록) 막대 하나하나가
+     너무 얇아져서 클릭하기 어려워지는 문제와, 정확한 시각(예: 1시간23분32초)으로 못 가는
+     문제를 같이 해결하려고 추가했다. */
+  .tl-controls { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 10px; flex-wrap: wrap; }
+  .tl-jump { display: flex; align-items: center; gap: 6px; }
+  .tl-jump input {
+    width: 110px; background: #1a1c22; border: 1px solid #2a2d34; border-radius: 7px;
+    padding: 6px 9px; color: #e8e9ec; font-size: 11.5px; font-family: inherit; outline: none;
+  }
+  .tl-jump input::placeholder { color: #4a4d55; }
+  .tl-jump input:focus { border-color: #5b8def; }
+  .tl-jump button {
+    background: #1f2937; border: 1px solid #2a2d34; border-radius: 7px; color: #9fc0f7;
+    font-size: 11px; font-weight: 700; cursor: pointer; font-family: inherit; padding: 6px 12px;
+  }
+  .tl-jump-error { font-size: 10.5px; color: #f28a90; }
+  .tl-zoom { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+  .tl-zoom-btn {
+    width: 24px; height: 24px; border-radius: 6px; background: #1a1c22; border: 1px solid #2a2d34;
+    color: #c2c4ca; font-size: 13px; font-weight: 700; cursor: pointer; font-family: inherit; line-height: 1;
+  }
+  .tl-zoom-btn:disabled { opacity: .4; cursor: not-allowed; }
+  .tl-zoom-label { font-size: 10.5px; color: #6b6f78; width: 34px; text-align: center; }
+
+  .tl-chart-hint { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+  .tl-chart-hint .label { font-size: 10.5px; color: #6b6f78; }
+  .tl-chart-hint .hint { font-size: 10px; color: #5c6069; }
+
+  /* 막대/구간을 실제 시간축 비율(px per ms)로 그려서, 방송이 길어 버킷 수가 늘어나도 막대
+     하나의 최소 너비(줌 레벨)가 보장되도록 한다 — 대신 전체가 화면보다 넓어지면 가로 스크롤. */
+  .tl-hscroll { overflow-x: auto; overflow-y: hidden; padding-bottom: 4px; }
+  #tlVolumeChart { display: flex; align-items: flex-end; gap: 2px; height: 88px; width: max-content; }
+  .tl-bar { flex: 0 0 auto; min-height: 3px; border-radius: 2px 2px 0 0; cursor: pointer; transition: opacity .15s, background .15s; }
+
+  #tlSegments { display: flex; gap: 3px; margin-top: 10px; width: max-content; }
+  .tl-segment { cursor: pointer; flex-shrink: 0; }
+  .tl-segment .block {
+    height: 26px; border-radius: 5px; display: flex; align-items: center; justify-content: center;
+    overflow: hidden; transition: all .15s; border: 1px solid transparent;
+  }
+  .tl-segment .block span { font-size: 10px; font-weight: 700; white-space: nowrap; }
+  .tl-segment .time-label { font-size: 9.5px; color: #8a8d96; margin-top: 5px; white-space: nowrap; }
+
+  #tlUserMarks { margin-top: 6px; padding-top: 8px; border-top: 1px dashed #22242b; display: none; }
+  #tlUserMarks .label { font-size: 10px; color: #6b6f78; margin-bottom: 6px; }
+  #tlUserMarks .track { position: relative; height: 14px; }
+  #tlUserMarks .baseline { position: absolute; left: 0; right: 0; top: 6px; height: 1px; background: #22242b; }
+  #tlUserMarks .mark { position: absolute; top: 0; width: 2px; height: 14px; border-radius: 1px; }
+
+  #tlUserChips { display: flex; align-items: center; gap: 6px; margin-top: 14px; flex-wrap: wrap; }
+  #tlUserChips .caption { font-size: 11px; color: #6b6f78; margin-right: 2px; }
+  .tl-user-chip {
+    font-size: 11px; font-weight: 600; border-radius: 20px; padding: 4px 11px; cursor: pointer;
+    transition: all .15s; background: #15171c; border: 1px solid #22242b; color: #8a8d96;
+  }
+  .tl-user-chip.active { background: rgba(91,141,239,0.16); border-color: rgba(91,141,239,0.5); color: #9fc0f7; }
+  #tlUserClear { font-size: 11px; color: #6b6f78; padding: 4px 8px; cursor: pointer; }
+
+  #tlUserSummary {
+    margin-top: 12px; background: #15171c; border: 1px solid #1f2128; border-radius: 11px; padding: 14px; display: none;
+  }
+  #tlUserSummary .head { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
+  #tlUserSummary .dot { width: 26px; height: 26px; border-radius: 50%; opacity: .25; }
+  #tlUserSummary .name { font-size: 14px; font-weight: 700; }
+  #tlUserSummary .sub { font-size: 11px; color: #6b6f78; }
+  #tlUserSummary .grid { display: grid; grid-template-columns: repeat(4,1fr); gap: 8px; }
+  #tlUserSummary .grid .k { font-size: 10px; color: #6b6f78; }
+  #tlUserSummary .grid .v { font-size: 15px; font-weight: 700; color: #f2f3f5; }
+
+  .tl-moments { display: flex; gap: 8px; margin: 14px 0 18px; }
+  .tl-moment-card { flex: 1; background: #15171c; border: 1px solid #1f2128; border-radius: 10px; padding: 10px 12px; cursor: pointer; }
+  .tl-moment-card .time { font-size: 10.5px; font-weight: 700; margin-bottom: 3px; }
+  .tl-moment-card .label { font-size: 11.5px; font-weight: 600; color: #dcdde2; }
+  .tl-moment-card .detail { font-size: 10px; color: #6b6f78; margin-top: 2px; }
+
+  .tl-detail-head { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; }
+  .tl-detail-head .section-title { margin-bottom: 0; }
+  .tl-detail-badge { font-size: 10.5px; font-weight: 700; border-radius: 20px; padding: 3px 9px; }
+  .tl-detail-range { font-size: 11px; color: #6b6f78; }
+  .tl-focus-label { font-size: 10.5px; color: #8a8d96; margin-left: auto; background: #1a1c22; border-radius: 20px; padding: 3px 9px; }
+
+  #tlLog { background: #111318; border: 1px solid #1f2128; border-radius: 10px; overflow: hidden; }
+  #tlLog .head { padding: 9px 12px; border-bottom: 1px solid #1c1e24; font-size: 10.5px; color: #6b6f78; }
+  .tl-log-row {
+    display: flex; align-items: center; gap: 10px; padding: 7px 12px; font-size: 12px;
+    line-height: 1.5; border-bottom: 1px solid #16181d;
+  }
+  .tl-log-row .time {
+    color: #4a4d55; font-family: 'SF Mono', Consolas, monospace; font-size: 10.5px; flex-shrink: 0;
+  }
+  .tl-log-row .act {
+    font-size: 9.5px; font-weight: 700; border-radius: 4px; padding: 2px 6px; flex-shrink: 0;
+  }
+  .tl-log-row .nick { font-weight: 600; flex-shrink: 0; }
+  .tl-log-row .text { color: #c2c4ca; word-break: break-word; }
+
+  /* 타이틀바 설정 버튼 (좌측) */
+  #titlebar .gear {
+    width: 44px; height: 100%; display: flex; align-items: center; justify-content: center;
+    background: transparent; border: none; cursor: pointer; -webkit-app-region: no-drag;
+    color: #6b6f78; transition: color .15s, background .15s; flex-shrink: 0;
+  }
+  #titlebar .gear:hover { color: #c2c4ca; background: #1a1c22; }
+
+  /* 타이틀바 창 컨트롤(최소화/최대화/닫기, 우측) — 윈도우 표준 배치/스타일 */
+  #titlebar .win-controls { display: flex; height: 100%; -webkit-app-region: no-drag; flex-shrink: 0; }
+  #titlebar .win-btn {
+    width: 46px; height: 100%; display: flex; align-items: center; justify-content: center;
+    background: transparent; border: none; cursor: pointer; padding: 0;
+    color: #9a9da5; transition: background .15s, color .15s;
+  }
+  #titlebar .win-btn:hover { background: #1e2027; color: #e8e9ec; }
+  #titlebar .win-btn.win-btn-close:hover { background: #e15b64; color: #fff; }
+
+  /* 설정 모달 */
+  #settingsOverlay {
+    position: fixed; inset: 0; background: rgba(0,0,0,0.55); display: none;
+    align-items: center; justify-content: center; z-index: 50;
+  }
+  #settingsPanel {
+    width: 420px; background: #14151a; border: 1px solid #22242b; border-radius: 14px;
+    padding: 22px; box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+  }
+  #settingsPanel h2 { font-size: 15px; font-weight: 700; color: #f2f3f5; margin: 0 0 4px; }
+  #settingsPanel .desc { font-size: 11.5px; color: #6b6f78; margin-bottom: 16px; line-height: 1.6; }
+  #settingsPanel label { font-size: 11.5px; font-weight: 600; color: #9a9da5; display: block; margin-bottom: 6px; }
+  #settingsPanel input[type="text"], #settingsPanel input[type="password"] {
+    width: 100%; box-sizing: border-box; background: #1a1c22; border: 1px solid #2a2d34; border-radius: 8px;
+    padding: 9px 11px; color: #e8e9ec; font-size: 12.5px; font-family: inherit; outline: none;
+  }
+  #settingsPanel input:focus { border-color: #5b8def; }
+  /* 설정 화면 구분선. 예전엔 id(#settingsDivider)였는데 한 화면에 세 번 쓰여서(같은 id를
+     여러 요소가 갖는 건 HTML 표준 위반 - JS에서 참조하는 곳은 없어 실동작 문제는 없었지만)
+     class로 바꿨다. */
+  .settings-divider { height: 1px; background: #22242b; margin: 18px 0 14px; }
+  #chzzkLoginRow { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+  #chzzkLoginStatus { font-size: 11.5px; font-weight: 600; color: #6b6f78; }
+  #chzzkLoginStatus.on { color: #5ee6a3; }
+  #chzzkLoginStatus.expired { color: #e6b95e; }
+  #chzzkLoginRow .export-btn { padding: 7px 14px; }
+  #settingsAutoLaunchRow {
+    display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  }
+  #settingsAutoLaunchRow .txt { font-size: 11.5px; font-weight: 600; color: #9a9da5; }
+  #settingsAutoLaunchRow .txt .desc { font-size: 10.5px; font-weight: 400; color: #6b6f78; margin-top: 2px; }
+  .switch { position: relative; width: 34px; height: 19px; flex-shrink: 0; }
+  .switch input { opacity: 0; width: 0; height: 0; }
+  .switch .slider {
+    position: absolute; inset: 0; background: #2a2d34; border-radius: 20px; cursor: pointer; transition: background .15s;
+  }
+  .switch .slider::before {
+    content: ""; position: absolute; width: 15px; height: 15px; left: 2px; top: 2px;
+    background: #8a8d96; border-radius: 50%; transition: transform .15s, background .15s;
+  }
+  .switch input:checked + .slider { background: rgba(94,230,163,0.25); }
+  .switch input:checked + .slider::before { transform: translateX(15px); background: #5ee6a3; }
+  #settingsApiKeyLink { font-size: 11px; color: #5b8def; text-decoration: none; }
+  #settingsApiKeyLink:hover { text-decoration: underline; }
+  #settingsStatus { font-size: 11px; color: #5ee6a3; margin-top: 4px; display: none; }
+  #settingsFoot, #advancedSettingsFoot { display: flex; justify-content: flex-end; gap: 8px; margin-top: 20px; }
+  #settingsFoot button, #advancedSettingsFoot button {
+    height: 34px; padding: 0 16px; border-radius: 7px; font-size: 12px; font-weight: 600;
+    cursor: pointer; font-family: inherit; border: none;
+  }
+  #settingsCancel, #advancedSettingsCancel, #advancedSettingsReset {
+    background: #1a1c22; color: #9a9da5; border: 1px solid #2a2d34 !important;
+  }
+  #settingsSave, #advancedSettingsSave { background: #5ee6a3; color: #0b0c0f; }
+  #advancedSettingsStatus { font-size: 11px; color: #5ee6a3; margin-top: 10px; display: none; }
+
+  /* 설정 화면 안의 "고급 설정 열기" 행 (자동실행 토글 행과 같은 레이아웃 재사용) */
+  #advancedSettingsRow { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+  #advancedSettingsRow .txt { font-size: 11.5px; font-weight: 600; color: #9a9da5; }
+  #advancedSettingsRow .txt .desc { font-size: 10.5px; font-weight: 400; color: #6b6f78; margin-top: 2px; }
+
+  /* 고급 설정 모달 */
+  #advancedSettingsOverlay {
+    position: fixed; inset: 0; background: rgba(0,0,0,0.55); display: none;
+    align-items: center; justify-content: center; z-index: 51;
+  }
+  #advancedSettingsPanel {
+    width: 520px; max-height: 82vh; display: flex; flex-direction: column;
+    background: #14151a; border: 1px solid #22242b; border-radius: 14px;
+    padding: 22px; box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+  }
+  #advancedSettingsPanel h2 { font-size: 15px; font-weight: 700; color: #f2f3f5; margin: 0 0 4px; flex-shrink: 0; }
+  #advancedSettingsPanel .desc { font-size: 11.5px; color: #6b6f78; margin-bottom: 12px; line-height: 1.6; flex-shrink: 0; }
+  #advancedSettingsWarning {
+    font-size: 11px; line-height: 1.6; color: #e6b95e; background: rgba(230,185,94,0.08);
+    border: 1px solid rgba(230,185,94,0.3); border-radius: 8px; padding: 10px 12px;
+    margin-bottom: 14px; flex-shrink: 0;
+  }
+  #advancedSettingsFields { overflow-y: auto; flex: 1; min-height: 0; padding-right: 4px; }
+  .adv-group { margin-bottom: 16px; }
+  .adv-group:last-child { margin-bottom: 0; }
+  .adv-group-title {
+    font-size: 11px; font-weight: 700; color: #7ea3f2; text-transform: uppercase;
+    letter-spacing: 0.04em; margin-bottom: 8px;
+  }
+  .adv-field {
+    display: flex; align-items: center; justify-content: space-between; gap: 12px;
+    padding: 7px 0; border-bottom: 1px solid #1a1c22;
+  }
+  .adv-field:last-child { border-bottom: none; }
+  .adv-field .label { font-size: 11.5px; color: #c2c4ca; flex: 1; min-width: 0; }
+  .adv-field .label .unit { color: #5c6069; font-size: 10.5px; margin-left: 4px; }
+  .adv-field input[type="number"] {
+    width: 90px; flex-shrink: 0; box-sizing: border-box; background: #1a1c22;
+    border: 1px solid #2a2d34; border-radius: 7px; padding: 6px 9px; color: #e8e9ec;
+    font-size: 12px; font-family: inherit; outline: none; text-align: right;
+  }
+  .adv-field input[type="number"]:focus { border-color: #5b8def; }
+  #advancedSettingsFoot { flex-shrink: 0; }
+</style>
+</head>
+<body>
+<div id="app">
+
+  <div id="titlebar">
+    <button class="gear" id="settingsBtn" title="설정" aria-label="설정">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
+    </button>
+    <div class="titlebar-spacer"></div>
+    <div class="win-controls">
+      <button class="win-btn" id="winMinBtn" title="최소화" aria-label="최소화">
+        <svg width="10" height="10" viewBox="0 0 10 10"><rect x="0" y="4.5" width="10" height="1" fill="currentColor"></rect></svg>
+      </button>
+      <button class="win-btn" id="winMaxBtn" title="최대화" aria-label="최대화">
+        <svg width="10" height="10" viewBox="0 0 10 10"><rect x="0.5" y="0.5" width="9" height="9" fill="none" stroke="currentColor" stroke-width="1"></rect></svg>
+      </button>
+      <button class="win-btn win-btn-close" id="winCloseBtn" title="닫기" aria-label="닫기">
+        <svg width="10" height="10" viewBox="0 0 10 10"><line x1="0" y1="0" x2="10" y2="10" stroke="currentColor" stroke-width="1"></line><line x1="10" y1="0" x2="0" y2="10" stroke="currentColor" stroke-width="1"></line></svg>
+      </button>
+    </div>
+  </div>
+
+  <div id="topbar">
+    <div id="selectedChannelBox">
+      <span class="name" id="selectedChannelName">채널을 선택해주세요</span>
+      <span class="sub" id="selectedChannelSub">왼쪽 즐겨찾기 목록에서 선택하거나 채널을 추가하세요</span>
+    </div>
+
+    <button class="action" id="stopBtn" disabled>
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><rect x="5" y="5" width="14" height="14" rx="2"></rect></svg>
+      종료 (리포트 생성)
+    </button>
+
+    <div style="flex:1;"></div>
+
+    <span id="visionBadge" class="off"><span class="indicator"></span><span id="visionBadgeText">AI 분석: -</span></span>
+
+    <div style="display:flex; align-items:center; gap:10px; font-size:12px; color:#8a8d96;">
+      <span>상태:</span>
+      <span id="statusBadge"><span class="indicator" id="statusDot"></span><span id="statusText">대기 중</span></span>
+    </div>
+  </div>
+
+  <div id="settingsOverlay">
+    <div id="settingsPanel">
+      <h2>설정</h2>
+      <label>chzzk 로그인 (선택 — 일부 다시보기·연령 제한 방송에 필요)</label>
+      <div class="desc" style="margin-bottom:10px;">
+        일부 다시보기(VOD) 영상이나 연령 제한 방송은 로그인 없이는 정보 조회가 막혀 있습니다.
+        아래 버튼을 누르면 실제 치지직/네이버 로그인 페이지가 새 창으로 뜹니다 — 비밀번호는
+        이 프로그램이 아니라 그 페이지에 직접 입력되고, 로그인이 끝나면 자동으로 감지해서
+        창이 닫힙니다. 로그인하지 않아도 공개 채널/영상은 그대로 이용할 수 있습니다.
+      </div>
+      <div id="chzzkLoginRow">
+        <span id="chzzkLoginStatus">로그인 안 됨</span>
+        <button id="chzzkLoginBtn" class="export-btn">chzzk 로그인</button>
+      </div>
+      <div class="settings-divider"></div>
+      <label>AI 화면 분석(Claude API 키, 선택)</label>
+      <div class="desc" style="margin-bottom:10px;">
+        게임중/대화중/휴식중(먹방 포함) 판단에 실제 방송 화면을 분석해서 정확도를 높이는 선택
+        기능입니다. Anthropic 계정의 Claude API 키를 발급받아 아래에 입력하면 켜집니다 — 키가
+        없어도 채팅량/카테고리 기반 추정은 그대로 동작하고, 다른 기능도 전부 정상 작동합니다.
+        키는 이 컴퓨터에만 저장되고(Anthropic API 호출 외에는) 어디로도 전송되지 않으며, 호출할
+        때마다 아주 적은 비용이 발생합니다.
+      </div>
+      <label for="settingsApiKey">Claude API 키</label>
+      <input type="password" id="settingsApiKey" placeholder="sk-ant-..." autocomplete="off" />
+      <div class="desc" style="margin:6px 0 10px;">
+        <a href="#" id="settingsApiKeyLink">API 키 발급받기 ↗</a>
+      </div>
+      <div class="settings-divider"></div>
+      <div id="settingsAutoLaunchRow">
+        <div class="txt">
+          컴퓨터 켤 때 자동 실행
+          <div class="desc">즐겨찾기 자동시작 토글과 함께 쓰면, 컴퓨터를 켜기만 해도 감시가 다시 시작됩니다</div>
+        </div>
+        <label class="switch">
+          <input type="checkbox" id="settingsAutoLaunch" />
+          <span class="slider"></span>
+        </label>
+      </div>
+      <div class="settings-divider"></div>
+      <div id="advancedSettingsRow">
+        <div class="txt">
+          고급 설정 (로컬 분석 로직 세부 조정)
+          <div class="desc">방송 상태 확인 주기, 휴식 감지 민감도, 타임라인 판단 기준 등을 직접 조절할 수 있어요</div>
+        </div>
+        <button id="advancedSettingsBtn" class="export-btn">열기</button>
+      </div>
+      <div id="settingsStatus"></div>
+      <div id="settingsFoot">
+        <button id="settingsCancel">닫기</button>
+        <span style="flex:1"></span>
+        <button id="settingsSave">저장</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="advancedSettingsOverlay">
+    <div id="advancedSettingsPanel">
+      <h2>고급 설정</h2>
+      <div class="desc">
+        예전엔 코드에 고정값으로 박혀있던 로컬 휴식 감지·타임라인 판단 로직의 세부 값들을
+        여기서 직접 조절할 수 있습니다. 바뀐 값은 그 다음 새로 시작하는 감시/다시보기 분석부터
+        적용됩니다 (이미 진행 중인 감시는 다시 시작해야 반영돼요).
+      </div>
+      <div id="advancedSettingsWarning">
+        ⚠️ 특히 "민감도/신뢰도/샘플 개수" 계열 값은 로우레벨 계수라, 너무 세게 건드리면
+        오탐(잘못 판단)이 늘거나 반대로 정상적인 상황을 놓칠 수 있어요. 확신 없으면 기본값을
+        유지하거나, 아래 "초기값으로 되돌리기"로 언제든 되돌릴 수 있습니다.
+      </div>
+      <div id="advancedSettingsFields"></div>
+      <div id="advancedSettingsStatus"></div>
+      <div id="advancedSettingsFoot">
+        <button id="advancedSettingsReset">초기값으로 되돌리기</button>
+        <span style="flex:1"></span>
+        <button id="advancedSettingsCancel">닫기</button>
+        <button id="advancedSettingsSave">저장</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="statusStrip">
+    <span>채널: <b id="stripChannel">-</b></span>
+    <span class="sep">|</span>
+    <span>경과 시간: <b id="stripElapsed">00:00:00</b></span>
+    <span class="sep">|</span>
+    <span>수집 메시지: <b id="stripMsgCount">0</b>개</span>
+    <span class="sep">|</span>
+    <span>후원 감지: <b class="donation" id="stripDonationCount">0</b>건</span>
+  </div>
+
+  <div id="main">
+    <div id="sidebar">
+      <div id="sidebarSegment">
+        <button class="seg-btn active" id="segFavorites" data-seg="favorites">즐겨찾기</button>
+        <button class="seg-btn" id="segVod" data-seg="vod">VOD 분석</button>
+      </div>
+
+      <div id="segPanelFavorites" class="seg-panel">
+        <div id="favoriteAddBox">
+          <input type="text" id="favoriteAddInput" placeholder="채널ID 또는 방송 URL" />
+          <button id="favoriteAddBtn" title="즐겨찾기 추가">+</button>
+        </div>
+        <div id="favoriteAddError" class="sidebar-error"></div>
+        <div id="favoriteList">
+          <div id="favoriteEmpty">아직 즐겨찾기한 채널이 없습니다. 위에 채널ID나 방송 URL을 입력해 추가해보세요.</div>
+        </div>
+      </div>
+
+      <div id="segPanelVod" class="seg-panel" style="display:none;">
+        <div id="vodAddBox">
+          <input type="text" id="vodAddInput" placeholder="다시보기(VOD) 영상 URL" />
+          <button id="vodAddBtn" title="VOD 분석 시작">+</button>
+        </div>
+        <div id="vodAddError" class="sidebar-error"></div>
+        <div id="vodJobList">
+          <div id="vodJobEmpty">
+            아직 분석한 다시보기 영상이 없습니다. 위에 영상 URL을 입력하면 채팅을 전부 모아
+            리포트와 편집점을 만들어드려요. 화면 분석(휴식 감지)은 지원하지 않고, 채팅량
+            기반 추정만 사용합니다.
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div id="mainEmpty">
+      <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="#3a3d44" stroke-width="1.5"><circle cx="12" cy="12" r="9"></circle><path d="M12 8v4l3 2"></path></svg>
+      <span class="title">왼쪽에서 채널을 선택해주세요</span>
+      <span class="sub">즐겨찾기를 추가하고 토글을 켜면 감시가 시작됩니다</span>
+    </div>
+
+    <div id="chatPanel">
+      <div class="live-video-box">
+        <div class="head">
+          <span class="label">라이브 방송</span>
+          <span class="hint" id="liveOpenExternalBtn">브라우저에서 열기 ↗</span>
+        </div>
+        <div id="liveVideoEmpty">방송 중이 아니에요.</div>
+        <video id="liveVideoEl" controls muted playsinline style="display:none;"></video>
+      </div>
+      <div class="live-chat-box">
+        <div class="head">
+          <span class="label">실시간 채팅</span>
+          <span class="hint">자동 스크롤</span>
+        </div>
+        <div id="chatFeed">
+          <div id="liveIndicator" style="display:none;"><span class="dot"></span>실시간 수신 중...</div>
+        </div>
+      </div>
+    </div>
+
+    <div id="vodMediaPanel">
+      <div class="vod-video-box">
+        <div class="head">
+          <span class="label">다시보기 영상</span>
+          <span class="hint" id="vodOpenExternalBtn">브라우저에서 열기 ↗</span>
+        </div>
+        <div id="vodVideoEmpty">영상을 불러오는 중...</div>
+        <video id="vodVideoEl" controls playsinline style="display:none;"></video>
+      </div>
+      <div class="vod-search-box">
+        <div class="head">
+          <span class="label">채팅 검색</span>
+          <span class="hint">비우면 재생 위치와 동기화</span>
+        </div>
+        <div id="vodSearchForm">
+          <input id="vodSearchInput" type="text" placeholder="닉네임 또는 채팅 내용 검색 (비우면 재생 위치 채팅)" />
+          <button id="vodSearchBtn">검색</button>
+        </div>
+        <div id="vodSearchResults">
+          <div id="vodSearchEmpty">채팅을 불러오는 중...</div>
+        </div>
+      </div>
+    </div>
+
+    <div id="rightPanel">
+      <div id="tabs">
+        <div class="tab active" id="tabLog" data-tab="log">동작 로그</div>
+        <div class="tab" id="tabReport" data-tab="report">최종 리포트<span class="ready-dot" id="reportReadyDot" style="display:none;"></span></div>
+        <div class="tab" id="tabTimeline" data-tab="timeline">타임라인</div>
+      </div>
+
+      <div id="logView"></div>
+
+      <div id="reportView">
+        <div id="reportEmpty">
+          <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="#3a3d44" stroke-width="1.5"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14,2 14,8 20,8"></polyline></svg>
+          <span class="title">아직 생성된 리포트가 없습니다</span>
+          <span class="sub">감시를 종료하면 리포트가 이곳에 표시됩니다</span>
+        </div>
+        <div id="reportContent" style="display:none;"></div>
+      </div>
+
+      <div id="timelineView">
+        <div id="timelineEmpty">
+          <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="#3a3d44" stroke-width="1.5"><circle cx="12" cy="12" r="9"></circle><polyline points="12,7 12,12 15.5,14"></polyline></svg>
+          <span class="title">감시를 시작하면 히스토리가 기록됩니다</span>
+        </div>
+        <div id="timelineContent" style="display:none;"></div>
+      </div>
+    </div>
+  </div>
+
+</div>
+<!-- VOD 영상 재생용. hls.js는 "일반/구버전" 다시보기(m3u8)를, dash.js는 ABR_HLS 방식(mpd)을
+     재생할 때 쓴다 — 어느 쪽이 쓰일지는 영상마다 다르므로 둘 다 미리 로드해둔다. 둘 다 이
+     프로젝트에 npm 의존성으로 등록해두고 빌드된 파일만 복사해왔다(오프라인에서도 동작). -->
+<script src="vendor/hls.min.js"></script>
+<script src="vendor/dash.all.min.js"></script>
+<script src="renderer.js"></script>
+</body>
+</html>

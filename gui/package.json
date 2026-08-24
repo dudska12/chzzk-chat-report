@@ -1,0 +1,13 @@
+{
+  "name": "chzzk-chat-report-gui",
+  "version": "0.1.0",
+  "private": true,
+  "description": "chzzk-chat-report 핵심 로직(../src, ../dist)을 감싸는 Electron GUI",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron ."
+  },
+  "devDependencies": {
+    "electron": "^32.0.0"
+  }
+}

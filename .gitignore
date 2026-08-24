@@ -1,0 +1,12 @@
+node_modules/
+gui/node_modules/
+dist/
+data/
+reports/
+models/
+config.json
+*.log
+release/
+.claude/
+.DS_Store
+Thumbs.db
