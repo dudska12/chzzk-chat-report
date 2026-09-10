@@ -1,0 +1,51 @@
+name: Mentor Bot - Full Repo Review
+
+on:
+  workflow_dispatch:
+    inputs:
+      max_files:
+        description: "이번에 리뷰 이슈를 열 파일 개수"
+        required: false
+        default: "6"
+      path_prefix:
+        description: "이 경로로 시작하는 파일만 대상으로 (예: src/) — 비워두면 전체"
+        required: false
+        default: ""
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: mentor-full-${{ github.event.issue.number || 'dispatch' }}
+  cancel-in-progress: false
+
+jobs:
+  start-review:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - run: node .github/scripts/full-review-start.mjs
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+
+  reply:
+    # 이슈(=full-review로 열린 리뷰 스레드)에 달린 댓글에만 반응
+    if: github.event_name == 'issue_comment' && github.event.issue.pull_request == null
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - run: node .github/scripts/issue-reply.mjs
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
