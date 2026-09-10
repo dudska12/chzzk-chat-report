@@ -91,12 +91,17 @@ async function main() {
       maxTokens: 400,
     });
 
-    const body = `${question}\n\n${buildMarker({ round: 1, done: false })}`;
+    // 주의: 질문(+마커)은 이슈 본문이 아니라 반드시 "댓글"로 남겨야 한다.
+    // issue-reply.mjs는 /issues/{n}/comments 목록에서만 마커를 찾기 때문에,
+    // 본문에 마커를 넣으면 답글이 달려도 봇이 스레드를 못 찾아 조용히 무시한다.
     const issue = await ghPost(`/repos/${owner}/${repo}/issues`, {
       title,
-      body,
+      body: `사수봇이 \`${file.path}\` 파일을 리뷰합니다. 첫 질문은 아래 댓글에 있어요.`,
       labels: [LABEL],
     });
+
+    const body = `${question}\n\n${buildMarker({ round: 1, done: false })}`;
+    await ghPost(`/repos/${owner}/${repo}/issues/${issue.number}/comments`, { body });
     console.log(`이슈 생성: #${issue.number} (${file.path})`);
   }
 }
